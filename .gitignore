@@ -100,3 +100,4 @@ data
 /sandbox
 /plots/outputs
 /wandb/
+examples/pointnav_weights.pth

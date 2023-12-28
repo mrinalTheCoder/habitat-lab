@@ -23,6 +23,7 @@ from habitat.tasks.rearrange.utils import (
     rearrange_logger,
 )
 from habitat.tasks.utils import cartesian_to_polar
+from habitat.utils.geometry_utils import quaternion_rotate_vector
 
 
 class MultiObjSensor(PointGoalSensor):
@@ -80,6 +81,16 @@ class TargetCurrentSensor(UsesArticulatedAgentInterface, MultiObjSensor):
 
         return pos.reshape(-1)
 
+def compute_pointgoal(source_position, source_rotation, goal_position):
+    direction_vector = goal_position - source_position
+    direction_vector_agent = quaternion_rotate_vector(
+        source_rotation.inverse(), direction_vector
+    )
+
+    rho, phi = cartesian_to_polar(
+        -direction_vector_agent[2], direction_vector_agent[0]
+    )
+    return np.array([rho, -phi], dtype=np.float32)
 
 @registry.register_sensor
 class TargetStartSensor(UsesArticulatedAgentInterface, MultiObjSensor):
@@ -90,6 +101,8 @@ class TargetStartSensor(UsesArticulatedAgentInterface, MultiObjSensor):
     cls_uuid: str = "obj_start_sensor"
 
     def get_observation(self, *args, observations, episode, **kwargs):
+        agent_state = self._sim.get_agent_state(self.agent_id)
+        rotation_world_agent = agent_state.rotation
         self._sim: RearrangeSim
         global_T = self._sim.get_agent_data(
             self.agent_id
@@ -102,8 +115,23 @@ class TargetStartSensor(UsesArticulatedAgentInterface, MultiObjSensor):
             sel_idx = self._task.force_set_idx
             sel_idx = list(idxs).index(sel_idx)
             pos = pos[[sel_idx], :]
-        return batch_transform_point(pos, T_inv, np.float32).reshape(-1)
-
+        goal_position = list(batch_transform_point(pos, T_inv,
+                                                   np.float32).reshape(-1))
+        # pointgoal = list(compute_pointgoal(np.zeros((3,), np.float32),
+        #                                    rotation_world_agent,
+        #                                    goal_position))
+        # goal_position.extend(pointgoal)
+        heading_vector = quaternion_rotate_vector(
+            agent_state.rotation.inverse(), np.array([0, 0, -1])
+        )
+        # goal_position = [0, 0, 2]
+        # print(heading_vector)
+        rho = np.linalg.norm(goal_position)
+        theta = np.dot(heading_vector, goal_position) / rho
+        theta = np.arccos(theta)
+        goal_position = list(goal_position)
+        goal_position.extend([rho, theta])
+        return np.array(goal_position, dtype=np.float32)
 
 class PositionGpsCompassSensor(UsesArticulatedAgentInterface, Sensor):
     def __init__(self, *args, sim, task, **kwargs):
